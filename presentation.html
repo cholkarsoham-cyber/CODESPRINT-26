@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PS 07 — Subscription Billing &amp; Dunning Engine</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a1a;
+    --surface: #12122a;
+    --card: #1a1a3e;
+    --border: #2a2a5a;
+    --text: #e8e8f0;
+    --muted: #8888aa;
+    --accent: #7c5cfc;
+    --accent2: #00d4aa;
+    --accent3: #ff6b6b;
+    --accent4: #ffd93d;
+    --gradient1: linear-gradient(135deg, #7c5cfc 0%, #00d4aa 100%);
+    --gradient2: linear-gradient(135deg, #ff6b6b 0%, #ffd93d 100%);
+    --gradient3: linear-gradient(135deg, #7c5cfc 0%, #ff6b6b 100%);
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ── Slide container ── */
+  .deck { position: relative; width: 100vw; height: 100vh; }
+
+  .slide {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    padding: 60px 80px;
+    opacity: 0; pointer-events: none;
+    transition: opacity .5s ease, transform .5s ease;
+    transform: translateX(40px);
+  }
+  .slide.active {
+    opacity: 1; pointer-events: auto; transform: translateX(0);
+  }
+
+  /* ── Typography ── */
+  h1 { font-size: 3.2rem; font-weight: 800; line-height: 1.15; margin-bottom: 16px; }
+  h2 { font-size: 2.2rem; font-weight: 700; line-height: 1.2; margin-bottom: 12px; }
+  h3 { font-size: 1.4rem; font-weight: 600; margin-bottom: 8px; }
+  p, li { font-size: 1.15rem; line-height: 1.7; color: var(--muted); }
+  .subtitle { font-size: 1.35rem; color: var(--muted); font-weight: 400; max-width: 700px; text-align: center; }
+
+  .gradient-text {
+    background: var(--gradient1); -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .gradient-text-2 {
+    background: var(--gradient2); -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .gradient-text-3 {
+    background: var(--gradient3); -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent; background-clip: text;
+  }
+
+  /* ── Cards & grids ── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; width: 100%; max-width: 1100px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; width: 100%; max-width: 1100px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 20px; width: 100%; max-width: 1100px; }
+  .grid-5 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr; gap: 16px; width: 100%; max-width: 1100px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 28px; position: relative; overflow: hidden;
+  }
+  .card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: var(--gradient1); opacity: 0; transition: opacity .3s;
+  }
+  .card:hover::before { opacity: 1; }
+
+  .card .icon {
+    width: 48px; height: 48px; border-radius: 12px; display: flex;
+    align-items: center; justify-content: center; font-size: 1.5rem;
+    margin-bottom: 16px;
+  }
+  .card h3 { color: var(--text); }
+  .card p { font-size: 1rem; }
+
+  /* ── State machine ── */
+  .state-flow {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    justify-content: center; margin: 24px 0;
+  }
+  .state-node {
+    padding: 14px 24px; border-radius: 12px; font-weight: 600;
+    font-size: 1rem; border: 2px solid transparent; text-align: center;
+    min-width: 120px;
+  }
+  .state-arrow { font-size: 1.6rem; color: var(--muted); }
+  .s-trial    { background: #1a2a4a; color: #60a5fa; border-color: #3b82f6; }
+  .s-active   { background: #1a3a2a; color: #34d399; border-color: #10b981; }
+  .s-pastdue  { background: #3a2a1a; color: #fbbf24; border-color: #f59e0b; }
+  .s-suspend  { background: #3a1a1a; color: #f87171; border-color: #ef4444; }
+  .s-cancel   { background: #2a1a2a; color: #a78bfa; border-color: #8b5cf6; }
+
+  /* ── Code blocks ── */
+  .code-block {
+    background: #0d0d20; border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 24px; font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem; line-height: 1.8; color: #c8c8e0;
+    overflow-x: auto; text-align: left; width: 100%; max-width: 900px;
+  }
+  .code-block .kw { color: #c792ea; }
+  .code-block .fn { color: #82aaff; }
+  .code-block .str { color: #c3e88d; }
+  .code-block .cmt { color: #546e7a; }
+  .code-block .num { color: #f78c6c; }
+
+  /* ── Demo timeline ── */
+  .timeline { display: flex; flex-direction: column; gap: 16px; width: 100%; max-width: 900px; }
+  .tl-step {
+    display: flex; align-items: flex-start; gap: 16px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px 24px;
+  }
+  .tl-num {
+    width: 36px; height: 36px; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; font-weight: 700;
+    font-size: 0.95rem; flex-shrink: 0;
+  }
+  .tl-step h3 { font-size: 1.1rem; margin-bottom: 4px; }
+  .tl-step p { font-size: 0.95rem; }
+
+  /* ── Metric pill ── */
+  .metric {
+    text-align: center; padding: 24px 16px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+  }
+  .metric .val { font-size: 2.6rem; font-weight: 800; }
+  .metric .label { font-size: 0.9rem; color: var(--muted); margin-top: 4px; }
+
+  /* ── Table ── */
+  table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+  th { text-align: left; padding: 10px 14px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 14px; border-bottom: 1px solid #1a1a3a; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 6px;
+    font-size: 0.8rem; font-weight: 600;
+  }
+  .badge-green { background: #064e3b; color: #34d399; }
+  .badge-red   { background: #4c0519; color: #fb7185; }
+  .badge-blue  { background: #1e3a5f; color: #60a5fa; }
+
+  /* ── Navigation ── */
+  .nav-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; height: 56px;
+    background: rgba(10,10,26,.92); backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border); display: flex;
+    align-items: center; justify-content: space-between; padding: 0 32px;
+    z-index: 100;
+  }
+  .nav-bar button {
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 20px; border-radius: 8px; cursor: pointer; font-size: .9rem;
+    font-family: inherit; transition: background .2s;
+  }
+  .nav-bar button:hover { background: var(--border); }
+  .nav-bar button:disabled { opacity: .3; cursor: default; }
+  .slide-counter { color: var(--muted); font-size: .9rem; font-weight: 500; }
+
+  .progress-bar {
+    position: fixed; top: 0; left: 0; height: 3px; background: var(--gradient1);
+    z-index: 100; transition: width .4s ease;
+  }
+
+  /* ── Decorative blobs ── */
+  .blob {
+    position: absolute; border-radius: 50%; filter: blur(100px); opacity: .12;
+    pointer-events: none;
+  }
+  .blob-1 { width: 500px; height: 500px; background: #7c5cfc; top: -150px; right: -100px; }
+  .blob-2 { width: 400px; height: 400px; background: #00d4aa; bottom: -100px; left: -100px; }
+  .blob-3 { width: 350px; height: 350px; background: #ff6b6b; top: 50%; left: 50%; transform: translate(-50%,-50%); }
+
+  /* ── Tag / chip ── */
+  .tag {
+    display: inline-block; padding: 4px 12px; border-radius: 20px;
+    font-size: .8rem; font-weight: 600; margin: 3px;
+  }
+  .tag-purple { background: #2d1b69; color: #a78bfa; }
+  .tag-green  { background: #064e3b; color: #34d399; }
+  .tag-blue   { background: #1e3a5f; color: #60a5fa; }
+  .tag-yellow { background: #422006; color: #fbbf24; }
+
+  /* ── Utility ── */
+  .text-center { text-align: center; }
+  .mb-8  { margin-bottom: 8px; }
+  .mb-16 { margin-bottom: 16px; }
+  .mb-24 { margin-bottom: 24px; }
+  .mb-32 { margin-bottom: 32px; }
+  .mb-40 { margin-bottom: 40px; }
+  .mt-16 { margin-top: 16px; }
+  .mt-24 { margin-top: 24px; }
+  .w-full { width: 100%; max-width: 1100px; }
+  .flex-center { display: flex; justify-content: center; align-items: center; }
+
+  .team-name { font-size: 1rem; color: var(--accent); font-weight: 600; letter-spacing: 2px; text-transform: uppercase; }
+
+  .divider { width: 80px; height: 3px; background: var(--gradient1); border-radius: 4px; margin: 16px auto; }
+
+  ul { list-style: none; padding: 0; }
+  ul li { padding: 6px 0; padding-left: 24px; position: relative; }
+  ul li::before {
+    content: '▸'; position: absolute; left: 0; color: var(--accent); font-weight: 700;
+  }
+</style>
+</head>
+<body>
+
+<div class="progress-bar" id="progress"></div>
+
+<div class="deck" id="deck">
+
+  <!-- ════════════════════════ SLIDE 1 — TITLE ════════════════════════ -->
+  <div class="slide active" data-slide="0">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="team-name mb-24">CodeSprint 2026 — PS 07</div>
+    <h1 class="text-center" style="font-size:3.6rem;">
+      Subscription Billing<br><span class="gradient-text">&amp; Dunning Engine</span>
+    </h1>
+    <div class="divider mb-24"></div>
+    <p class="subtitle">
+      A production-grade billing state machine with plan catalogs, automated invoicing,
+      intelligent dunning flows, MRR analytics — and a Time Machine for live demos.
+    </p>
+    <div class="mt-24" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+      <span class="tag tag-purple">Next.js 14</span>
+      <span class="tag tag-green">PostgreSQL</span>
+      <span class="tag tag-blue">Prisma ORM</span>
+      <span class="tag tag-yellow">TypeScript</span>
+      <span class="tag tag-purple">React 18</span>
+      <span class="tag tag-green">TanStack Query</span>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 2 — PROBLEM ════════════════════════ -->
+  <div class="slide" data-slide="1">
+    <div class="blob blob-3"></div>
+    <h2 class="text-center mb-8">The <span class="gradient-text-2">Problem</span></h2>
+    <p class="subtitle mb-40">SaaS companies lose 1–3% of revenue to third-party billing platforms — yet the core engine is a well-defined, solvable state machine.</p>
+    <div class="grid-3">
+      <div class="card">
+        <div class="icon" style="background:#2d1b69;">💸</div>
+        <h3>Revenue Leakage</h3>
+        <p>Stripe Billing, Chargebee, Zoho charge per-transaction fees that scale linearly with growth.</p>
+      </div>
+      <div class="card">
+        <div class="icon" style="background:#1a3a2a;">🔁</div>
+        <h3>Failed Payments</h3>
+        <p>Without smart dunning, a single card decline leads to involuntary churn — silently losing customers.</p>
+      </div>
+      <div class="card">
+        <div class="icon" style="background:#3a2a1a;">📊</div>
+        <h3>Lack of Visibility</h3>
+        <p>MRR, churn rate, and subscription health are scattered across third-party dashboards you don't control.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 3 — SOLUTION ════════════════════════ -->
+  <div class="slide" data-slide="2">
+    <h2 class="text-center mb-8">Our <span class="gradient-text">Solution</span></h2>
+    <p class="subtitle mb-40">A self-hosted billing engine with a strict lifecycle state machine, automated dunning, and a real-time revenue dashboard.</p>
+    <div class="grid-2">
+      <div class="card">
+        <div class="icon" style="background:#2d1b69;">🏗️</div>
+        <h3>Plan Catalog &amp; Signup</h3>
+        <p>Monthly / yearly plans with trial periods. Customers subscribe from a public pricing page with mock payment tokens.</p>
+      </div>
+      <div class="card">
+        <div class="icon" style="background:#064e3b;">⚙️</div>
+        <h3>Server-Enforced State Machine</h3>
+        <p>trial → active → past_due → suspended → cancelled. The API rejects any illegal state transition.</p>
+      </div>
+      <div class="card">
+        <div class="icon" style="background:#422006;">🔔</div>
+        <h3>Billing Engine &amp; Dunning</h3>
+        <p>Auto-generates invoices on cycle date. Failed payment triggers dunning email → retry in 3 days → 2nd failure suspends.</p>
+      </div>
+      <div class="card">
+        <div class="icon" style="background:#3a1a2a;">⏰</div>
+        <h3>Time Machine</h3>
+        <p>POST /time/skip advances simulated time. Demo an entire 30-day billing cycle in under 5 seconds.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 4 — STATE MACHINE ════════════════════════ -->
+  <div class="slide" data-slide="3">
+    <h2 class="text-center mb-8">Subscription <span class="gradient-text-3">Lifecycle</span></h2>
+    <p class="subtitle mb-32">A strict, server-enforced state machine. Skipping states is rejected by the API.</p>
+    <div class="state-flow mb-32">
+      <div class="state-node s-trial">🧪 Trial</div>
+      <div class="state-arrow">→</div>
+      <div class="state-node s-active">✅ Active</div>
+      <div class="state-arrow">→</div>
+      <div class="state-node s-pastdue">⚠️ Past Due</div>
+      <div class="state-arrow">→</div>
+      <div class="state-node s-suspend">🚫 Suspended</div>
+      <div class="state-arrow">→</div>
+      <div class="state-node s-cancel">❌ Cancelled</div>
+    </div>
+    <div class="grid-2" style="max-width:900px;">
+      <div class="card" style="border-left:3px solid #10b981;">
+        <h3 style="color:#34d399;">✓ Happy Path</h3>
+        <p>Trial ends → Payment succeeds → Status becomes <b>Active</b> → Invoice generated → Next billing date advances by 1 month.</p>
+      </div>
+      <div class="card" style="border-left:3px solid #ef4444;">
+        <h3 style="color:#fb7185;">✗ Dunning Path</h3>
+        <p>Payment fails → Status becomes <b>Past Due</b> → Dunning email sent → Retry in 3 days → 2nd failure → <b>Suspended</b> + email.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 5 — ARCHITECTURE ════════════════════════ -->
+  <div class="slide" data-slide="4">
+    <h2 class="text-center mb-8">System <span class="gradient-text">Architecture</span></h2>
+    <p class="subtitle mb-32">Built on the QuikIT monorepo conventions — multi-tenant, org-scoped, audit-logged.</p>
+    <div class="code-block" style="max-width:950px; font-size: 0.82rem;">
+<span class="cmt">┌──────────────────────────────────────────────────────────────────────┐</span>
+<span class="cmt">│</span>  <span class="kw">Browser</span>                                                            <span class="cmt">│</span>
+<span class="cmt">│</span>    <span class="str">(marketing)</span> → Public Pricing Page + Plan Catalog                  <span class="cmt">│</span>
+<span class="cmt">│</span>    <span class="str">(dashboard)</span> → MRR Dashboard + Time Machine + Event Log            <span class="cmt">│</span>
+<span class="cmt">└──────────────────────────────┬───────────────────────────────────────┘</span>
+                               │  React Query / fetch
+                               ▼
+<span class="cmt">┌──────────────────────────────────────────────────────────────────────┐</span>
+<span class="cmt">│</span>  <span class="kw">Next.js API Routes</span> (wrapped in <span class="fn">withOrgAuth</span>)                        <span class="cmt">│</span>
+<span class="cmt">│</span>    POST <span class="str">/api/subscriptions</span>     → Create subscription (Zod validated)  <span class="cmt">│</span>
+<span class="cmt">│</span>    POST <span class="str">/api/time/skip</span>          → Time Machine + Billing Engine       <span class="cmt">│</span>
+<span class="cmt">│</span>    GET  <span class="str">/api/dashboard</span>          → MRR, Churn, Invoices, Events        <span class="cmt">│</span>
+<span class="cmt">└──────────────────────────────┬───────────────────────────────────────┘</span>
+                               │  Prisma + <span class="fn">db.$transaction</span>
+                               ▼
+<span class="cmt">┌──────────────────────────────────────────────────────────────────────┐</span>
+<span class="cmt">│</span>  <span class="kw">PostgreSQL</span> (schema: <span class="str">app_billing</span>)                                    <span class="cmt">│</span>
+<span class="cmt">│</span>    BillingPlan · BillingCustomer · Subscription · Invoice · Event    <span class="cmt">│</span>
+<span class="cmt">│</span>    All queries scoped by <span class="fn">orgId</span> (multi-tenant isolation)               <span class="cmt">│</span>
+<span class="cmt">└──────────────────────────────────────────────────────────────────────┘</span>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 6 — DATABASE SCHEMA ════════════════════════ -->
+  <div class="slide" data-slide="5">
+    <h2 class="text-center mb-8">Database <span class="gradient-text-2">Schema</span></h2>
+    <p class="subtitle mb-32">5 models, all org-scoped, with cascade deletes and composite indexes.</p>
+    <div class="grid-5">
+      <div class="card" style="padding:20px;">
+        <h3 style="font-size:1rem;color:#a78bfa;">BillingPlan</h3>
+        <ul style="font-size:.8rem;">
+          <li>name</li>
+          <li>price (Float)</li>
+          <li>interval (month/year)</li>
+          <li>trialDays (Int)</li>
+          <li>orgId ★</li>
+        </ul>
+      </div>
+      <div class="card" style="padding:20px;">
+        <h3 style="font-size:1rem;color:#34d399;">BillingCustomer</h3>
+        <ul style="font-size:.8rem;">
+          <li>name</li>
+          <li>email</li>
+          <li>paymentToken</li>
+          <li>orgId ★</li>
+        </ul>
+      </div>
+      <div class="card" style="padding:20px;">
+        <h3 style="font-size:1rem;color:#60a5fa;">Subscription</h3>
+        <ul style="font-size:.8rem;">
+          <li>status (enum)</li>
+          <li>nextBillingDate</li>
+          <li>retryCount</li>
+          <li>planId, customerId</li>
+          <li>orgId ★</li>
+        </ul>
+      </div>
+      <div class="card" style="padding:20px;">
+        <h3 style="font-size:1rem;color:#fbbf24;">Invoice</h3>
+        <ul style="font-size:.8rem;">
+          <li>amount (Float)</li>
+          <li>status (paid/failed)</li>
+          <li>date</li>
+          <li>subscriptionId</li>
+          <li>orgId ★</li>
+        </ul>
+      </div>
+      <div class="card" style="padding:20px;">
+        <h3 style="font-size:1rem;color:#fb7185;">BillingEvent</h3>
+        <ul style="font-size:.8rem;">
+          <li>type (lifecycle)</li>
+          <li>details (JSON)</li>
+          <li>timestamp</li>
+          <li>subscriptionId</li>
+          <li>orgId ★</li>
+        </ul>
+      </div>
+    </div>
+    <p class="mt-16" style="font-size:.9rem;color:var(--muted);">★ Every query filters by <code style="color:var(--accent);">orgId</code> — strict multi-tenant data isolation.</p>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 7 — BILLING ENGINE ════════════════════════ -->
+  <div class="slide" data-slide="6">
+    <h2 class="text-center mb-8">Billing Engine <span class="gradient-text">&amp; Dunning Flow</span></h2>
+    <p class="subtitle mb-32">What happens when you click "Skip 31 Days"</p>
+    <div class="code-block" style="font-size:.82rem;">
+<span class="cmt">// POST /api/time/skip — the core billing job</span>
+
+<span class="kw">for each</span> subscription <span class="kw">where</span> nextBillingDate ≤ simulated_now:
+
+  <span class="num">1.</span> Create <span class="fn">Invoice</span> { amount: plan.price, date: billingDate }
+
+  <span class="num">2.</span> Attempt payment via <span class="fn">mockGateway</span>(customer.paymentToken)
+     <span class="cmt">// "tok_success" → paid  |  "tok_fail" → failed</span>
+
+  <span class="num">3.</span> <span class="kw">if</span> payment === <span class="str">"paid"</span>:
+       → status = <span class="str">"active"</span>
+       → advance nextBillingDate by +1 month
+       → reset retryCount to <span class="num">0</span>
+       → log event: <span class="str">"payment_succeeded"</span>
+
+  <span class="num">4.</span> <span class="kw">if</span> payment === <span class="str">"failed"</span> AND retryCount === <span class="num">0</span>:
+       → status = <span class="str">"past_due"</span>
+       → schedule retry in <span class="num">3</span> days
+       → send <span class="fn">dunning email</span>
+       → log event: <span class="str">"payment_failed_dunning"</span>
+
+  <span class="num">5.</span> <span class="kw">if</span> payment === <span class="str">"failed"</span> AND retryCount >= <span class="num">1</span>:
+       → status = <span class="str">"suspended"</span>
+       → send <span class="fn">suspension email</span>
+       → log event: <span class="str">"subscription_suspended"</span>
+
+  All wrapped in <span class="fn">db.$transaction</span> + <span class="fn">writeAuditLog</span>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 8 — DASHBOARD ════════════════════════ -->
+  <div class="slide" data-slide="7">
+    <h2 class="text-center mb-8">Revenue <span class="gradient-text-2">Dashboard</span></h2>
+    <p class="subtitle mb-32">Real-time financial metrics, invoice history, and a chronological event log.</p>
+    <div class="grid-4 mb-24">
+      <div class="metric">
+        <div class="val gradient-text">$87.00</div>
+        <div class="label">Monthly Recurring Revenue</div>
+      </div>
+      <div class="metric">
+        <div class="val" style="color:#34d399;">2</div>
+        <div class="label">Active Subscriptions</div>
+      </div>
+      <div class="metric">
+        <div class="val" style="color:#f87171;">1</div>
+        <div class="label">Suspended</div>
+      </div>
+      <div class="metric">
+        <div class="val" style="color:#fbbf24;">33.3%</div>
+        <div class="label">Churn Rate</div>
+      </div>
+    </div>
+    <div class="card w-full" style="overflow-x:auto;">
+      <h3 class="mb-16">Recent Invoices</h3>
+      <table>
+        <thead><tr><th>Customer</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead>
+        <tbody>
+          <tr><td>Alice Corp</td><td>$29.00</td><td><span class="badge badge-green">Paid</span></td><td>2026-10-31</td></tr>
+          <tr><td>Bob Industries</td><td>$29.00</td><td><span class="badge badge-green">Paid</span></td><td>2026-10-31</td></tr>
+          <tr><td>Charlie LLC</td><td>$29.00</td><td><span class="badge badge-red">Failed</span></td><td>2026-10-31</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 9 — LIVE DEMO FLOW ════════════════════════ -->
+  <div class="slide" data-slide="8">
+    <h2 class="text-center mb-8">Live Demo <span class="gradient-text">Flow</span></h2>
+    <p class="subtitle mb-32">The exact sequence we'll show on Demo Day.</p>
+    <div class="timeline">
+      <div class="tl-step">
+        <div class="tl-num" style="background:#2d1b69;color:#a78bfa;">1</div>
+        <div>
+          <h3>Subscribe 3 Customers</h3>
+          <p>Alice (tok_success), Bob (tok_success), Charlie (tok_fail) each subscribe to Pro Monthly ($29/mo, 0 trial days).</p>
+        </div>
+      </div>
+      <div class="tl-step">
+        <div class="tl-num" style="background:#064e3b;color:#34d399;">2</div>
+        <div>
+          <h3>Skip 31 Days ⏩</h3>
+          <p>3 invoices generated. Alice & Bob pay successfully → <b>Active</b>. Charlie fails → <b>Past Due</b>. Dunning email sent.</p>
+        </div>
+      </div>
+      <div class="tl-step">
+        <div class="tl-num" style="background:#422006;color:#fbbf24;">3</div>
+        <div>
+          <h3>Skip 3 Days ⏩</h3>
+          <p>Dunning retry fires for Charlie. Payment fails again → <b>Suspended</b>. Suspension email sent. MRR drops.</p>
+        </div>
+      </div>
+      <div class="tl-step">
+        <div class="tl-num" style="background:#3a1a2a;color:#fb7185;">4</div>
+        <div>
+          <h3>Check Dashboard</h3>
+          <p>MRR = $58. Active = 2. Suspended = 1. Churn = 33%. Event log narrates the full story in chronological order.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 10 — TECH STACK ════════════════════════ -->
+  <div class="slide" data-slide="9">
+    <h2 class="text-center mb-8">Tech <span class="gradient-text-3">Stack</span></h2>
+    <div class="grid-3 mt-24">
+      <div class="card">
+        <h3>Frontend</h3>
+        <ul>
+          <li>Next.js 14 (App Router)</li>
+          <li>React 18 (Server + Client)</li>
+          <li>TanStack React Query</li>
+          <li>Tailwind CSS 3</li>
+          <li>@quikit/ui components</li>
+          <li>Lucide icons</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Backend</h3>
+        <ul>
+          <li>Next.js API Routes</li>
+          <li>TypeScript (strict mode)</li>
+          <li>Zod validation</li>
+          <li>NextAuth (JWT + Redis)</li>
+          <li>Prisma ORM (multiSchema)</li>
+          <li>Audit logging</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Infrastructure</h3>
+        <ul>
+          <li>PostgreSQL 14+</li>
+          <li>Redis (session store)</li>
+          <li>Turborepo (monorepo)</li>
+          <li>Docker (GKE deploy)</li>
+          <li>GitHub Actions CI/CD</li>
+          <li>Vitest + Playwright</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 11 — KEY FEATURES ════════════════════════ -->
+  <div class="slide" data-slide="10">
+    <h2 class="text-center mb-8">Key <span class="gradient-text">Differentiators</span></h2>
+    <p class="subtitle mb-32">What sets this apart from a basic CRUD billing form.</p>
+    <div class="grid-2">
+      <div class="card" style="border-left:3px solid #7c5cfc;">
+        <h3>🔒 Multi-Tenant Isolation</h3>
+        <p>Every Prisma query is scoped by <code>orgId</code>. No org can ever see another org's billing data. Enforced at the API layer, not just the UI.</p>
+      </div>
+      <div class="card" style="border-left:3px solid #00d4aa;">
+        <h3>🧮 Transactional Integrity</h3>
+        <p>Invoice creation + payment attempt + status update + event log all happen inside a single <code>db.$transaction</code>. Partial failures roll back cleanly.</p>
+      </div>
+      <div class="card" style="border-left:3px solid #ffd93d;">
+        <h3>⏰ Time Machine</h3>
+        <p>A single API call fast-forwards the engine's clock. No cron jobs, no waiting. The entire 30-day billing cycle runs in under 2 seconds.</p>
+      </div>
+      <div class="card" style="border-left:3px solid #ff6b6b;">
+        <h3>📜 Complete Event Sourcing</h3>
+        <p>Every lifecycle change is recorded in the BillingEvent table with a timestamp, type, and JSON details. The event log tells the full story.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 12 — BENCHMARKS ════════════════════════ -->
+  <div class="slide" data-slide="11">
+    <h2 class="text-center mb-8">vs. <span class="gradient-text-2">Benchmarks</span></h2>
+    <p class="subtitle mb-32">How our engine compares to the industry standards.</p>
+    <div class="card w-full" style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr><th>Feature</th><th>Stripe Billing</th><th>Chargebee</th><th>Our Engine</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Plan Catalog</td><td>✅</td><td>✅</td><td>✅</td></tr>
+          <tr><td>Lifecycle State Machine</td><td>✅</td><td>✅</td><td>✅ Server-enforced</td></tr>
+          <tr><td>Dunning / Smart Retries</td><td>✅</td><td>✅</td><td>✅ Configurable</td></tr>
+          <tr><td>MRR Dashboard</td><td>✅</td><td>✅</td><td>✅ Real-time</td></tr>
+          <tr><td>Event Log / Audit Trail</td><td>✅</td><td>✅</td><td>✅ Full sourcing</td></tr>
+          <tr><td>Time Machine (Demo Mode)</td><td>❌</td><td>❌</td><td><span class="badge badge-green">✅ Unique</span></td></tr>
+          <tr><td>Self-Hosted / No Fees</td><td>❌ 0.5–0.8%</td><td>❌ $249+/mo</td><td><span class="badge badge-green">✅ $0</span></td></tr>
+          <tr><td>Multi-Tenant Isolation</td><td>❌ Per-account</td><td>❌ Per-account</td><td><span class="badge badge-green">✅ orgId-scoped</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SLIDE 13 — THANK YOU ════════════════════════ -->
+  <div class="slide" data-slide="12">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="team-name mb-24">CodeSprint 2026</div>
+    <h1 class="text-center">
+      Thank <span class="gradient-text">You</span>
+    </h1>
+    <div class="divider mb-24"></div>
+    <p class="subtitle mb-32">
+      Questions? Let's dive into the live demo.
+    </p>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;">
+      <div class="card" style="min-width:200px;text-align:center;padding:20px;">
+        <h3 style="font-size:1rem;">📂 Repository</h3>
+        <p style="font-size:.85rem;">github.com/cholkarsoham-cyber/CODESPRINT-26</p>
+      </div>
+      <div class="card" style="min-width:200px;text-align:center;padding:20px;">
+        <h3 style="font-size:1rem;">🛠️ Problem Statement</h3>
+        <p style="font-size:.85rem;">PS 07 — Subscription Billing &amp; Dunning Engine</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Navigation bar ── -->
+<div class="nav-bar">
+  <button id="prev" onclick="go(-1)">← Prev</button>
+  <span class="slide-counter"><span id="cur">1</span> / <span id="tot">13</span></span>
+  <button id="next" onclick="go(1)">Next →</button>
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  const total = slides.length;
+  let current = 0;
+
+  document.getElementById('tot').textContent = total;
+
+  function go(dir) {
+    const next = current + dir;
+    if (next < 0 || next >= total) return;
+    slides[current].classList.remove('active');
+    slides[current].style.transform = dir > 0 ? 'translateX(-40px)' : 'translateX(40px)';
+    current = next;
+    slides[current].style.transform = dir > 0 ? 'translateX(40px)' : 'translateX(-40px)';
+    requestAnimationFrame(() => {
+      slides[current].classList.add('active');
+    });
+    update();
+  }
+
+  function update() {
+    document.getElementById('cur').textContent = current + 1;
+    document.getElementById('prev').disabled = current === 0;
+    document.getElementById('next').disabled = current === total - 1;
+    document.getElementById('progress').style.width = ((current + 1) / total * 100) + '%';
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); go(1); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); go(-1); }
+  });
+
+  update();
+</script>
+
+</body>
+</html>
