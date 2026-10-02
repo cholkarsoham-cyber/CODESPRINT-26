@@ -61,12 +61,14 @@ export function WebhookSimulator({ events }: WebhookSimulatorProps) {
           <div className="text-gray-600 italic">Waiting for events... Try skipping time.</div>
         )}
         
-        {displayedLogs.map((evt, idx) => (
-          <div key={`${evt.id}-${idx}`} className="animate-fade-in-up">
+        {displayedLogs.map((evt, idx) => {
+          if (!evt) return null;
+          return (
+          <div key={`${evt.id || idx}-${idx}`} className="animate-fade-in-up">
             <div className="flex items-center text-gray-400 mb-1">
               <span className="text-emerald-400 mr-2">POST</span>
               <span>/api/webhooks/stripe</span>
-              <span className="ml-auto text-gray-600">{new Date(evt.timestamp).toLocaleTimeString()}</span>
+              <span className="ml-auto text-gray-600">{evt.timestamp ? new Date(evt.timestamp).toLocaleTimeString() : 'Just now'}</span>
             </div>
             <div className="bg-[#161b22] p-3 rounded border border-gray-800 text-gray-300">
               <div className="text-blue-400 mb-1">Event: {evt.type}</div>
@@ -79,7 +81,7 @@ export function WebhookSimulator({ events }: WebhookSimulatorProps) {
             </div>
             <div className="mt-1 text-emerald-500">↳ 200 OK</div>
           </div>
-        ))}
+        )})}
       </div>
 
     </div>

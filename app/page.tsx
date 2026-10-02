@@ -93,7 +93,7 @@ export default function LandingPage() {
               {plans.map(plan => (
                 <div key={plan.id} className="bg-white border border-gray-200 p-6 rounded-xl shadow-sm">
                   <h3 className="text-lg font-semibold">{plan.name}</h3>
-                  <div className="text-2xl font-bold text-emerald-600 mt-2">${(plan.price / 100).toFixed(2)}</div>
+                  <div className="text-2xl font-bold text-emerald-600 mt-2">${plan.price.toFixed(2)}</div>
                   <div className="text-sm text-gray-500 uppercase tracking-wide mt-1">/ {plan.interval}</div>
                 </div>
               ))}
